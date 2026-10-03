@@ -1,10 +1,80 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ==========================================
-# Фикс вывода для Termux
+# Фикс вывода для Termux (убираем перекосы)
 # ==========================================
 fix_print() {
     awk '{print $0 "\r"}'
+}
+
+# ==========================================
+# Функция определения/фикса платформы Python
+# ==========================================
+fix_python_platform() {
+    echo "[INFO] Проверка платформы Python..."
+
+    # Нормальный случай — ничего не трогаем.
+    if python -c "import sysconfig; sysconfig.get_platform()" >/dev/null 2>&1; then
+        echo "[OK] Платформа Python определяется нормально."
+        return 0
+    fi
+
+    MACHINE="$(uname -m)"
+    ABI_LIST="$(getprop ro.product.cpu.abilist 2>/dev/null)"
+    API_LEVEL="$(getprop ro.build.version.sdk 2>/dev/null)"
+
+    echo "[WARN] Python не смог определить платформу."
+    echo "[INFO] Kernel machine: $MACHINE"
+    echo "[INFO] Android ABI: ${ABI_LIST:-unknown}"
+    echo "[INFO] Android API: ${API_LEVEL:-unknown}"
+
+    case "$MACHINE" in
+
+        armv8)
+            if printf '%s' "$ABI_LIST" | grep -qw "arm64-v8a"; then
+                export _PYTHON_HOST_PLATFORM="android-aarch64"
+                echo "[INFO] Используем ARM64 Android platform override."
+            else
+                echo "[FAIL] armv8 обнаружен, но ARM64 ABI не подтверждён."
+                return 1
+            fi
+            ;;
+
+        aarch64)
+            export _PYTHON_HOST_PLATFORM="android-aarch64"
+            echo "[INFO] Используем ARM64 Android platform override."
+            ;;
+
+        x86_64)
+            export _PYTHON_HOST_PLATFORM="android-x86_64"
+            echo "[INFO] Используем x86_64 Android platform override."
+            ;;
+
+        i686|x86)
+            export _PYTHON_HOST_PLATFORM="android-i686"
+            echo "[INFO] Используем x86 Android platform override."
+            ;;
+
+        armv8l|armv7l|arm)
+            export _PYTHON_HOST_PLATFORM="android-arm"
+            echo "[INFO] Используем ARM32 Android platform override."
+            ;;
+
+        *)
+            echo "[FAIL] Неизвестная архитектура: $MACHINE"
+            return 1
+            ;;
+    esac
+
+    # После override обязательно проверяем результат.
+    PLATFORM="$(python -c "import sysconfig; print(sysconfig.get_platform())" 2>/dev/null)"
+
+    if [ -z "$PLATFORM" ]; then
+        echo "[FAIL] Python всё ещё не может определить платформу."
+        return 1
+    fi
+
+    echo "[OK] Платформа Python: $PLATFORM"
 }
 
 # ==========================================
@@ -18,14 +88,11 @@ fix_print() {
 
     export DEBIAN_FRONTEND=noninteractive
 
-    # ==========================================
-    # Проверка pkg
-    # ==========================================
+    # --- Проверка pkg ---
     if ! command -v pkg >/dev/null 2>&1; then
         echo "[FAIL] pkg не найден."
         exit 1
     fi
-
     echo "[OK] pkg найден."
     echo ""
 
@@ -38,14 +105,8 @@ fix_print() {
     echo ""
 
     missing=()
-
     command -v python >/dev/null 2>&1 || missing+=(python)
-
-    {
-        command -v pip >/dev/null 2>&1 ||
-        command -v pip3 >/dev/null 2>&1
-    } || missing+=(python-pip)
-
+    { command -v pip >/dev/null 2>&1 || command -v pip3 >/dev/null 2>&1; } || missing+=(python-pip)
     command -v curl >/dev/null 2>&1 || missing+=(curl)
 
     if [ "${#missing[@]}" -eq 0 ]; then
@@ -53,61 +114,33 @@ fix_print() {
     else
         echo "[INFO] Будут установлены: ${missing[*]}"
         echo ""
-
+        
         echo "[INFO] Обновление списков пакетов..."
-
         if ! pkg update -y </dev/null >/dev/null 2>&1; then
             echo "[FAIL] Не удалось обновить списки пакетов."
             exit 1
         fi
-
         echo "[OK] Списки пакетов обновлены."
         echo ""
 
         echo "[INFO] Установка пакетов..."
-
         if ! pkg install -y "${missing[@]}" </dev/null >/dev/null 2>&1; then
             echo "[FAIL] Установка базовых пакетов не удалась."
             exit 1
         fi
-
+        
         hash -r
-
         echo "[OK] Базовые пакеты успешно установлены."
     fi
-
     echo ""
 
     # ==========================================
-    # Блок 1.5: Фикс Python 3.14 (armv8)
+    # Блок 1.5: Проверка/фикс платформы Python
     # ==========================================
-    PYTHON_VER=$(python -c \
-        "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
-    )
-
-    if [ "$PYTHON_VER" = "3.14" ]; then
-        echo "[INFO] Python 3.14: применение патча sysconfig (armv8)..."
-
-        python -c '
-import sysconfig
-
-p = sysconfig.__file__
-
-c = open(p).read()
-
-if "armv8" not in c:
-    c = c.replace(
-        "        \"x86_64\": \"x86_64\",",
-        "        \"armv8\": \"aarch64\",\n"
-        "        \"x86_64\": \"x86_64\","
-    )
-
-    open(p, "w").write(c)
-' >/dev/null 2>&1
-
-        echo "[OK] Патч sysconfig применен."
-        echo ""
+    if ! fix_python_platform; then
+        exit 1
     fi
+    echo ""
 
     # ==========================================
     # Блок 2: Python-зависимости
@@ -121,17 +154,12 @@ if "armv8" not in c:
         echo "[OK] requests уже установлен."
     else
         echo "[INFO] Установка requests..."
-
-        if ! python -m pip install requests \
-            --disable-pip-version-check >/dev/null 2>&1; then
-
+        if ! python -m pip install requests --disable-pip-version-check >/dev/null 2>&1; then
             echo "[FAIL] Не удалось установить requests."
             exit 1
         fi
-
         echo "[OK] requests успешно установлен."
     fi
-
     echo ""
 
     # ==========================================
@@ -142,22 +170,19 @@ if "armv8" not in c:
     echo "================================"
     echo ""
 
-    # Root
-    #if su -c "id" >/dev/null 2>&1; then
-    #    echo "[OK] Root-доступ активен."
-    #else
-    #    echo "[FAIL] Root-доступ не найден."
-    #    exit 1
-    #fi
+    # Root (строго обязательный)
+    if su -c "id" >/dev/null 2>&1; then
+        echo "[OK] Root-доступ активен."
+    else
+        echo "[FAIL] Root-доступ не найден."
+        exit 1
+    fi
 
     # Storage
     STORAGE_DIR="/storage/emulated/0"
-
     if [ -d "$STORAGE_DIR" ]; then
         echo "[OK] Storage доступна."
-
         STORAGE_TEST="$STORAGE_DIR/.warden_storage_test_$$"
-
         if touch "$STORAGE_TEST" >/dev/null 2>&1; then
             rm -f "$STORAGE_TEST"
             echo "[OK] Storage доступна для записи."
@@ -171,23 +196,51 @@ if "armv8" not in c:
         echo "[INFO] Выполните в Termux: termux-setup-storage"
         exit 1
     fi
-
     echo ""
 
     # ==========================================
-    # Блок 4: Загрузка Агента из main
+    # Блок 4: Загрузка Агента (GitHub Release)
     # ==========================================
     echo "================================"
     echo "        Загрузка Агента"
     echo "================================"
     echo ""
 
+    GITHUB_OWNER="Wardenip"
+    GITHUB_REPO="Warden-Releases"
     AGENT_FILE="$HOME/agent.py"
-    AGENT_URL="https://https://github.com/Wardenip/Warden-Releases/tree/main/releases/agent.py"
 
-    echo "[INFO] Загрузка agent.py из main..."
+    RELEASE_API="https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest"
 
-    if ! curl -fL "$AGENT_URL" -o "$AGENT_FILE"; then
+    echo "[INFO] Получение информации о последнем релизе..."
+    
+    RELEASE_JSON=$(curl -fsSL \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "$RELEASE_API")
+
+    if [ $? -ne 0 ] || [ -z "$RELEASE_JSON" ]; then
+        echo "[FAIL] Не удалось получить информацию о релизе."
+        echo "[INFO] Убедитесь, что в репозитории создан GitHub Release с файлом agent.py."
+        exit 1
+    fi
+
+    AGENT_URL=$(printf '%s' "$RELEASE_JSON" | python -c '
+import json, sys
+data = json.load(sys.stdin)
+for asset in data.get("assets", []):
+    if asset.get("name") == "agent.py":
+        print(asset.get("browser_download_url", ""))
+        break
+')
+
+    if [ -z "$AGENT_URL" ]; then
+        echo "[FAIL] Файл agent.py отсутствует в последнем релизе."
+        exit 1
+    fi
+
+    echo "[INFO] Скачивание agent.py..."
+    if ! curl -fsSL "$AGENT_URL" -o "$AGENT_FILE"; then
         echo "[FAIL] Не удалось скачать agent.py."
         rm -f "$AGENT_FILE"
         exit 1
@@ -201,7 +254,6 @@ if "armv8" not in c:
 
     echo "[OK] agent.py успешно загружен."
     echo ""
-
     echo "================================"
     echo "       Bootstrap SUCCESS"
     echo "================================"
@@ -213,12 +265,18 @@ if "armv8" not in c:
 # Проверка статуса выполнения Bootstrap
 # ==========================================
 EXIT_CODE=${PIPESTATUS[0]}
-
 if [ "$EXIT_CODE" -ne 0 ]; then
     exit "$EXIT_CODE"
 fi
 
 # ==========================================
+# Восстановление _PYTHON_HOST_PLATFORM для агента
+# ==========================================
+if ! fix_python_platform >/dev/null 2>&1; then
+    exit 1
+fi
+
+# ==========================================
 # Handoff: Передача управления Python-агенту
 # ==========================================
-exec python "$HOME/agent.py"
+exec python "$HOME/agent.py" </dev/tty
