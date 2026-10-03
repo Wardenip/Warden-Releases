@@ -143,12 +143,12 @@ if "armv8" not in c:
     echo ""
 
     # Root
-    if su -c "id" >/dev/null 2>&1; then
-        echo "[OK] Root-доступ активен."
-    else
-        echo "[FAIL] Root-доступ не найден."
-        exit 1
-    fi
+    #if su -c "id" >/dev/null 2>&1; then
+    #    echo "[OK] Root-доступ активен."
+    #else
+    #    echo "[FAIL] Root-доступ не найден."
+    #    exit 1
+    #fi
 
     # Storage
     STORAGE_DIR="/storage/emulated/0"
