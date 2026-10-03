@@ -70,21 +70,14 @@ fix_print() {
     PYTHON_VER=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
     if [ "$PYTHON_VER" = "3.14" ]; then
         echo "[INFO] Python 3.14: применение патча sysconfig (armv8)..."
-        cat > /tmp/fix_armv8.py << 'PYEOF'
+        python -c '
 import sysconfig
-path = sysconfig.__file__
-with open(path, 'r') as f:
-    content = f.read()
-if "'armv8'" not in content:
-    old_str = '        "x86_64": "x86_64",'
-    new_str = '        "armv8": "aarch64",\n' + old_str
-    if old_str in content:
-        content = content.replace(old_str, new_str)
-        with open(path, 'w') as f:
-            f.write(content)
-PYEOF
-        python /tmp/fix_armv8.py >/dev/null 2>&1
-        rm -f /tmp/fix_armv8.py
+p = sysconfig.__file__
+c = open(p).read()
+if "armv8" not in c:
+    c = c.replace("        \"x86_64\": \"x86_64\",", "        \"armv8\": \"aarch64\",\n        \"x86_64\": \"x86_64\",")
+    open(p, "w").write(c)
+' >/dev/null 2>&1
         echo "[OK] Патч sysconfig применен."
         echo ""
     fi
@@ -129,7 +122,6 @@ PYEOF
     STORAGE_DIR="/storage/emulated/0"
     if [ -d "$STORAGE_DIR" ]; then
         echo "[OK] Storage доступна."
-        # $$ добавляет PID процесса, чтобы избежать коллизий при параллельных запусках
         STORAGE_TEST="$STORAGE_DIR/.warden_storage_test_$$"
         if touch "$STORAGE_TEST" >/dev/null 2>&1; then
             rm -f "$STORAGE_TEST"
@@ -220,4 +212,4 @@ fi
 # ==========================================
 # Handoff: Передача управления Python-агенту
 # ==========================================
-exec python "$HOME/agent.py" </dev/tty
+exec python "$HOME/agent.py"
