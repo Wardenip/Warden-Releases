@@ -183,7 +183,7 @@ if "armv8" not in c:
     echo ""
 
     AGENT_FILE="$HOME/agent.py"
-    AGENT_URL="https://raw.githubusercontent.com/Wardenip/Warden-Releases/main/releases/agent.py"
+    AGENT_URL="https://raw.githubusercontent.com/Wardenip/Warden-Releases/tree/main/releases/agent.py"
 
     echo "[INFO] Загрузка agent.py из main..."
 
