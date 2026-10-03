@@ -197,4 +197,4 @@ fi
 # ==========================================
 # exec полностью заменяет процесс bash на python.
 # Агент получает чистый TTY терминала для своей логики и UI.
-exec python "$HOME/agent.py"
+exec python "$HOME/agent.py" </dev/tty
