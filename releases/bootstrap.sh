@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ==========================================
-# Фикс вывода для Termux (убираем перекосы)
+# Фикс вывода для Termux
 # ==========================================
 fix_print() {
     awk '{print $0 "\r"}'
@@ -13,7 +13,6 @@ fix_print() {
 fix_python_platform() {
     echo "[INFO] Проверка платформы Python..."
 
-    # Нормальный случай — ничего не трогаем.
     if python -c "import sysconfig; sysconfig.get_platform()" >/dev/null 2>&1; then
         echo "[OK] Платформа Python определяется нормально."
         return 0
@@ -66,7 +65,6 @@ fix_python_platform() {
             ;;
     esac
 
-    # После override обязательно проверяем результат.
     PLATFORM="$(python -c "import sysconfig; print(sysconfig.get_platform())" 2>/dev/null)"
 
     if [ -z "$PLATFORM" ]; then
@@ -78,6 +76,14 @@ fix_python_platform() {
 }
 
 # ==========================================
+# Определяем папку самого bootstrap
+# ==========================================
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+LOCAL_AGENT="$SCRIPT_DIR/agent.py"
+AGENT_FILE="$HOME/agent.py"
+
+# ==========================================
 # Весь код подготовки окружения
 # ==========================================
 {
@@ -86,18 +92,25 @@ fix_python_platform() {
     echo "================================"
     echo ""
 
+    echo "[INFO] Bootstrap directory:"
+    echo "$SCRIPT_DIR"
+    echo ""
+
     export DEBIAN_FRONTEND=noninteractive
 
-    # --- Проверка pkg ---
+    # ==========================================
+    # Проверка pkg
+    # ==========================================
     if ! command -v pkg >/dev/null 2>&1; then
         echo "[FAIL] pkg не найден."
         exit 1
     fi
+
     echo "[OK] pkg найден."
     echo ""
 
     # ==========================================
-    # Блок 1: Базовые пакеты
+    # Базовые пакеты
     # ==========================================
     echo "================================"
     echo "    Установка базовых пакетов"
@@ -105,45 +118,60 @@ fix_python_platform() {
     echo ""
 
     missing=()
+
     command -v python >/dev/null 2>&1 || missing+=(python)
-    { command -v pip >/dev/null 2>&1 || command -v pip3 >/dev/null 2>&1; } || missing+=(python-pip)
+
+    {
+        command -v pip >/dev/null 2>&1 ||
+        command -v pip3 >/dev/null 2>&1
+    } || missing+=(python-pip)
+
     command -v curl >/dev/null 2>&1 || missing+=(curl)
 
     if [ "${#missing[@]}" -eq 0 ]; then
+
         echo "[OK] python, pip, curl уже установлены."
+
     else
+
         echo "[INFO] Будут установлены: ${missing[*]}"
         echo ""
-        
+
         echo "[INFO] Обновление списков пакетов..."
+
         if ! pkg update -y </dev/null >/dev/null 2>&1; then
             echo "[FAIL] Не удалось обновить списки пакетов."
             exit 1
         fi
+
         echo "[OK] Списки пакетов обновлены."
         echo ""
 
         echo "[INFO] Установка пакетов..."
+
         if ! pkg install -y "${missing[@]}" </dev/null >/dev/null 2>&1; then
             echo "[FAIL] Установка базовых пакетов не удалась."
             exit 1
         fi
-        
+
         hash -r
+
         echo "[OK] Базовые пакеты успешно установлены."
     fi
+
     echo ""
 
     # ==========================================
-    # Блок 1.5: Проверка/фикс платформы Python
+    # Проверка платформы Python
     # ==========================================
     if ! fix_python_platform; then
         exit 1
     fi
+
     echo ""
 
     # ==========================================
-    # Блок 2: Python-зависимости
+    # Python-зависимости
     # ==========================================
     echo "================================"
     echo "   Проверка Python-зависимостей"
@@ -151,132 +179,162 @@ fix_python_platform() {
     echo ""
 
     if python -c "import requests" >/dev/null 2>&1; then
+
         echo "[OK] requests уже установлен."
+
     else
+
         echo "[INFO] Установка requests..."
-        if ! python -m pip install requests --disable-pip-version-check >/dev/null 2>&1; then
+
+        if ! python -m pip install requests \
+            --disable-pip-version-check \
+            >/dev/null 2>&1; then
+
             echo "[FAIL] Не удалось установить requests."
             exit 1
         fi
+
         echo "[OK] requests успешно установлен."
     fi
+
     echo ""
 
     # ==========================================
-    # Блок 3: Системные требования
+    # Системные требования
     # ==========================================
     echo "================================"
     echo "    Проверка системы и путей"
     echo "================================"
     echo ""
 
-    # Root (строго обязательный)
+    # Root
+
     if su -c "id" >/dev/null 2>&1; then
+
         echo "[OK] Root-доступ активен."
+
     else
+
         echo "[FAIL] Root-доступ не найден."
         exit 1
     fi
 
     # Storage
+
     STORAGE_DIR="/storage/emulated/0"
+
     if [ -d "$STORAGE_DIR" ]; then
+
         echo "[OK] Storage доступна."
+
         STORAGE_TEST="$STORAGE_DIR/.warden_storage_test_$$"
+
         if touch "$STORAGE_TEST" >/dev/null 2>&1; then
+
             rm -f "$STORAGE_TEST"
+
             echo "[OK] Storage доступна для записи."
+
         else
+
             echo "[FAIL] Запись в Storage запрещена."
             echo "[INFO] Выполните в Termux: termux-setup-storage"
+
             exit 1
         fi
+
     else
+
         echo "[FAIL] Storage не найдена."
         echo "[INFO] Выполните в Termux: termux-setup-storage"
+
         exit 1
     fi
+
     echo ""
 
     # ==========================================
-    # Блок 4: Загрузка Агента (GitHub Release)
+    # Локальный Agent
     # ==========================================
     echo "================================"
     echo "        Загрузка Агента"
     echo "================================"
     echo ""
 
-    GITHUB_OWNER="Wardenip"
-    GITHUB_REPO="Warden-Releases"
-    AGENT_FILE="$HOME/agent.py"
+    echo "[INFO] Поиск agent.py рядом с bootstrap..."
+    echo "[INFO] Путь: $LOCAL_AGENT"
 
-    RELEASE_API="https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest"
+    if [ ! -f "$LOCAL_AGENT" ]; then
 
-    echo "[INFO] Получение информации о последнем релизе..."
-    
-    RELEASE_JSON=$(curl -fsSL \
-        -H "Accept: application/vnd.github+json" \
-        -H "X-GitHub-Api-Version: 2022-11-28" \
-        "$RELEASE_API")
+        echo "[FAIL] agent.py не найден рядом с bootstrap."
+        echo ""
+        echo "[INFO] Ожидаемый путь:"
+        echo "$LOCAL_AGENT"
 
-    if [ $? -ne 0 ] || [ -z "$RELEASE_JSON" ]; then
-        echo "[FAIL] Не удалось получить информацию о релизе."
-        echo "[INFO] Убедитесь, что в репозитории создан GitHub Release с файлом agent.py."
         exit 1
     fi
 
-    AGENT_URL=$(printf '%s' "$RELEASE_JSON" | python -c '
-import json, sys
-data = json.load(sys.stdin)
-for asset in data.get("assets", []):
-    if asset.get("name") == "agent.py":
-        print(asset.get("browser_download_url", ""))
-        break
-')
+    if [ ! -s "$LOCAL_AGENT" ]; then
 
-    if [ -z "$AGENT_URL" ]; then
-        echo "[FAIL] Файл agent.py отсутствует в последнем релизе."
+        echo "[FAIL] agent.py пустой."
         exit 1
     fi
 
-    echo "[INFO] Скачивание agent.py..."
-    if ! curl -fsSL "$AGENT_URL" -o "$AGENT_FILE"; then
-        echo "[FAIL] Не удалось скачать agent.py."
-        rm -f "$AGENT_FILE"
+    echo "[OK] Локальный agent.py найден."
+
+    # ==========================================
+    # Копирование агента в HOME
+    # ==========================================
+
+    echo "[INFO] Копирование agent.py в:"
+    echo "$AGENT_FILE"
+
+    if ! cp -f "$LOCAL_AGENT" "$AGENT_FILE"; then
+
+        echo "[FAIL] Не удалось скопировать agent.py."
         exit 1
     fi
 
     if [ ! -s "$AGENT_FILE" ]; then
-        echo "[FAIL] Скачанный файл пустой."
+
+        echo "[FAIL] Скопированный agent.py пустой."
         rm -f "$AGENT_FILE"
+
         exit 1
     fi
 
-    echo "[OK] agent.py успешно загружен."
+    echo "[OK] agent.py успешно подготовлен."
     echo ""
+
     echo "================================"
     echo "       Bootstrap SUCCESS"
     echo "================================"
+
+    echo "[INFO] Agent:"
+    echo "$AGENT_FILE"
+
+    echo ""
     echo "[INFO] Передача управления агенту..."
 
 } | fix_print
 
 # ==========================================
-# Проверка статуса выполнения Bootstrap
+# Проверка статуса Bootstrap
 # ==========================================
 EXIT_CODE=${PIPESTATUS[0]}
+
 if [ "$EXIT_CODE" -ne 0 ]; then
     exit "$EXIT_CODE"
 fi
 
 # ==========================================
-# Восстановление _PYTHON_HOST_PLATFORM для агента
+# Повторная проверка Python platform
 # ==========================================
 if ! fix_python_platform >/dev/null 2>&1; then
     exit 1
 fi
 
 # ==========================================
-# Handoff: Передача управления Python-агенту
+# Запуск агента
 # ==========================================
-exec python "$HOME/agent.py" </dev/tty
+exec python "$AGENT_FILE" </dev/tty
