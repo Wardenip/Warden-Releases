@@ -1,31 +1,14 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ==========================================
-# Warden Bootstrap
-# Локальный запуск agent.py
+# Fallback for known problematic Android ABI
+# (does not patch system Python files)
 # ==========================================
-
-set -o pipefail
-
-
-# ==========================================
-# Фикс вывода для Termux
-# ==========================================
-
-fix_print() {
-    awk '{print $0 "\r"}'
-}
-
-
-# ==========================================
-# Определение/фикс платформы Python
-# ==========================================
-
 fix_python_platform() {
-    echo "[INFO] Проверка платформы Python..."
+    echo "[INFO] Checking Python platform..."
 
     if python -c "import sysconfig; sysconfig.get_platform()" >/dev/null 2>&1; then
-        echo "[OK] Платформа Python определяется нормально."
+        echo "[OK] Python platform detected correctly."
         return 0
     fi
 
@@ -33,45 +16,39 @@ fix_python_platform() {
     ABI_LIST="$(getprop ro.product.cpu.abilist 2>/dev/null)"
     API_LEVEL="$(getprop ro.build.version.sdk 2>/dev/null)"
 
-    echo "[WARN] Python не смог определить платформу."
+    echo "[WARN] Python failed to detect platform."
     echo "[INFO] Kernel machine: $MACHINE"
     echo "[INFO] Android ABI: ${ABI_LIST:-unknown}"
     echo "[INFO] Android API: ${API_LEVEL:-unknown}"
 
     case "$MACHINE" in
-
         armv8)
             if printf '%s' "$ABI_LIST" | grep -qw "arm64-v8a"; then
                 export _PYTHON_HOST_PLATFORM="android-aarch64"
-                echo "[INFO] Используем ARM64 Android platform override."
+                echo "[INFO] Using ARM64 Android platform override."
             else
-                echo "[FAIL] armv8 обнаружен, но ARM64 ABI не подтверждён."
+                echo "[FAIL] armv8 detected but ARM64 ABI not confirmed."
                 return 1
             fi
             ;;
-
         aarch64)
             export _PYTHON_HOST_PLATFORM="android-aarch64"
-            echo "[INFO] Используем ARM64 Android platform override."
+            echo "[INFO] Using ARM64 Android platform override."
             ;;
-
         x86_64)
             export _PYTHON_HOST_PLATFORM="android-x86_64"
-            echo "[INFO] Используем x86_64 Android platform override."
+            echo "[INFO] Using x86_64 Android platform override."
             ;;
-
         i686|x86)
             export _PYTHON_HOST_PLATFORM="android-i686"
-            echo "[INFO] Используем x86 Android platform override."
+            echo "[INFO] Using x86 Android platform override."
             ;;
-
         armv8l|armv7l|arm)
             export _PYTHON_HOST_PLATFORM="android-arm"
-            echo "[INFO] Используем ARM32 Android platform override."
+            echo "[INFO] Using ARM32 Android platform override."
             ;;
-
         *)
-            echo "[FAIL] Неизвестная архитектура: $MACHINE"
+            echo "[FAIL] Unknown architecture: $MACHINE"
             return 1
             ;;
     esac
@@ -79,28 +56,16 @@ fix_python_platform() {
     PLATFORM="$(python -c "import sysconfig; print(sysconfig.get_platform())" 2>/dev/null)"
 
     if [ -z "$PLATFORM" ]; then
-        echo "[FAIL] Python всё ещё не может определить платформу."
+        echo "[FAIL] Python still cannot detect platform."
         return 1
     fi
 
-    echo "[OK] Платформа Python: $PLATFORM"
+    echo "[OK] Python platform: $PLATFORM"
 }
 
-
 # ==========================================
-# Определяем директорию bootstrap
+# Full environment setup
 # ==========================================
-
-BOOTSTRAP_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-LOCAL_AGENT="$BOOTSTRAP_DIR/agent.py"
-AGENT_FILE="$HOME/agent.py"
-
-
-# ==========================================
-# Основная подготовка
-# ==========================================
-
 {
     echo "================================"
     echo "       Warden Bootstrap"
@@ -109,275 +74,198 @@ AGENT_FILE="$HOME/agent.py"
 
     export DEBIAN_FRONTEND=noninteractive
 
-
-    # ==========================================
-    # Блок 1: Проверка pkg
-    # ==========================================
-
     if ! command -v pkg >/dev/null 2>&1; then
-        echo "[FAIL] pkg не найден."
+        echo "[FAIL] pkg not found."
         exit 1
     fi
-
-    echo "[OK] pkg найден."
+    echo "[OK] pkg found."
     echo ""
 
-
-    # ==========================================
-    # Блок 2: Базовые пакеты
-    # ==========================================
-
     echo "================================"
-    echo "    Проверка базовых пакетов"
+    echo "   Installing base packages"
     echo "================================"
     echo ""
 
     missing=()
-
     command -v python >/dev/null 2>&1 || missing+=(python)
-
-    {
-        command -v pip >/dev/null 2>&1 ||
-        command -v pip3 >/dev/null 2>&1
-    } || missing+=(python-pip)
-
+    { command -v pip >/dev/null 2>&1 || command -v pip3 >/dev/null 2>&1; } || missing+=(python-pip)
     command -v curl >/dev/null 2>&1 || missing+=(curl)
 
-
     if [ "${#missing[@]}" -eq 0 ]; then
-
-        echo "[OK] python, pip, curl уже установлены."
-
+        echo "[OK] python, pip, curl already installed."
     else
-
-        echo "[INFO] Будут установлены: ${missing[*]}"
+        echo "[INFO] Will install: ${missing[*]}"
         echo ""
 
-        echo "[INFO] Обновление списков пакетов..."
-
-        if ! pkg update -y </dev/null >/dev/null 2>&1; then
-            echo "[FAIL] Не удалось обновить списки пакетов."
+        echo "[INFO] Updating package lists..."
+        if ! pkg update -y >/dev/null; then
+            echo "[FAIL] Failed to update package lists."
             exit 1
         fi
-
-        echo "[OK] Списки пакетов обновлены."
+        echo "[OK] Package lists updated."
         echo ""
 
-        echo "[INFO] Установка пакетов..."
-
-        if ! pkg install -y "${missing[@]}" </dev/null >/dev/null 2>&1; then
-            echo "[FAIL] Установка базовых пакетов не удалась."
+        echo "[INFO] Installing packages..."
+        if ! pkg install -y "${missing[@]}" >/dev/null; then
+            echo "[FAIL] Failed to install base packages."
             exit 1
         fi
 
         hash -r
-
-        echo "[OK] Базовые пакеты успешно установлены."
-
+        echo "[OK] Base packages installed successfully."
     fi
-
     echo ""
-
-
-    # ==========================================
-    # Блок 3: Проверка Python platform
-    # ==========================================
 
     if ! fix_python_platform; then
         exit 1
     fi
-
     echo ""
 
-
-    # ==========================================
-    # Блок 4: Python dependencies
-    # ==========================================
-
     echo "================================"
-    echo "   Проверка Python-зависимостей"
+    echo " Checking Python dependencies"
     echo "================================"
     echo ""
 
     if python -c "import requests" >/dev/null 2>&1; then
-
-        echo "[OK] requests уже установлен."
-
+        echo "[OK] requests already installed."
     else
-
-        echo "[INFO] Установка requests..."
-
-        if ! python -m pip install requests \
-            --disable-pip-version-check >/dev/null 2>&1; then
-
-            echo "[FAIL] Не удалось установить requests."
+        echo "[INFO] Installing requests..."
+        if ! python -m pip install requests --disable-pip-version-check >/dev/null 2>&1; then
+            echo "[FAIL] Failed to install requests."
             exit 1
         fi
-
-        echo "[OK] requests успешно установлен."
-
+        echo "[OK] requests installed successfully."
     fi
-
     echo ""
 
-
-    # ==========================================
-    # Блок 5: Root
-    # ==========================================
-
     echo "================================"
-    echo "       Проверка системы"
+    echo "  Checking system and paths"
     echo "================================"
     echo ""
 
     if su -c "id" >/dev/null 2>&1; then
-
-        echo "[OK] Root-доступ активен."
-
+        echo "[OK] Root access active."
     else
-
-        echo "[FAIL] Root-доступ не найден."
+        echo "[FAIL] Root access not found."
         exit 1
-
     fi
-
-    echo ""
-
-
-    # ==========================================
-    # Блок 6: Storage
-    # ==========================================
 
     STORAGE_DIR="/storage/emulated/0"
-
     if [ -d "$STORAGE_DIR" ]; then
-
-        echo "[OK] Storage доступна."
-
+        echo "[OK] Storage available."
         STORAGE_TEST="$STORAGE_DIR/.warden_storage_test_$$"
-
         if touch "$STORAGE_TEST" >/dev/null 2>&1; then
-
             rm -f "$STORAGE_TEST"
-
-            echo "[OK] Storage доступна для записи."
-
+            echo "[OK] Storage writable."
         else
-
-            echo "[FAIL] Запись в Storage запрещена."
-            echo "[INFO] Выполните в Termux: termux-setup-storage"
-
+            echo "[FAIL] Storage is not writable."
+            echo "[INFO] Run in Termux: termux-setup-storage"
             exit 1
         fi
-
     else
-
-        echo "[FAIL] Storage не найдена."
-        echo "[INFO] Выполните в Termux: termux-setup-storage"
-
+        echo "[FAIL] Storage not found."
+        echo "[INFO] Run in Termux: termux-setup-storage"
         exit 1
     fi
-
     echo ""
 
-
-    # ==========================================
-    # Блок 7: Локальный agent.py
-    # ==========================================
-
     echo "================================"
-    echo "        Загрузка Агента"
+    echo "      Downloading Agent"
     echo "================================"
     echo ""
 
-    echo "[INFO] Поиск agent.py рядом с bootstrap..."
-    echo "[INFO] Путь: $LOCAL_AGENT"
+    GITHUB_OWNER="Wardenip"
+    GITHUB_REPO="Warden-Releases"
+    AGENT_FILE="$HOME/agent.py"
+    RELEASE_API="https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest"
 
-    if [ ! -f "$LOCAL_AGENT" ]; then
+    echo "[INFO] Fetching latest release info..."
 
-        echo "[FAIL] agent.py не найден рядом с bootstrap."
-        echo ""
-        echo "[INFO] Ожидался файл:"
-        echo "$LOCAL_AGENT"
-
+    if ! RELEASE_JSON=$(curl -fsSL \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "$RELEASE_API"); then
+        echo "[FAIL] Failed to fetch release info."
+        echo "[INFO] Make sure GitHub Release exists with agent.py file."
         exit 1
     fi
 
-    echo "[OK] Локальный agent.py найден."
+    PARSED=$(printf '%s' "$RELEASE_JSON" | python -c '
+import json, sys
+data = json.load(sys.stdin)
+url = ""
+digest = ""
+for asset in data.get("assets", []):
+    if asset.get("name") == "agent.py":
+        url = asset.get("browser_download_url") or ""
+        digest = asset.get("digest") or ""
+        break
+print(url)
+print(digest)
+')
 
+    AGENT_URL=$(printf '%s\n' "$PARSED" | sed -n '1p')
+    ASSET_DIGEST=$(printf '%s\n' "$PARSED" | sed -n '2p')
 
-    # ==========================================
-    # Копирование в HOME
-    # ==========================================
-
-    if [ "$LOCAL_AGENT" = "$AGENT_FILE" ]; then
-
-        echo "[OK] agent.py уже находится в HOME."
-        echo "[INFO] Копирование не требуется."
-
-    else
-
-        echo "[INFO] Копирование agent.py в:"
-        echo "$AGENT_FILE"
-
-        if ! cp "$LOCAL_AGENT" "$AGENT_FILE"; then
-
-            echo "[FAIL] Не удалось скопировать agent.py."
-            exit 1
-        fi
-
-        echo "[OK] agent.py скопирован."
-
+    if [ -z "$AGENT_URL" ]; then
+        echo "[FAIL] agent.py not found in latest release."
+        exit 1
     fi
 
+    case "$ASSET_DIGEST" in
+        sha256:*)
+            ;;
+        *)
+            echo "[FAIL] Release has no sha256 digest for agent.py."
+            exit 1
+            ;;
+    esac
 
-    # ==========================================
-    # Проверка файла
-    # ==========================================
+    rm -f "$AGENT_FILE"
+
+    echo "[INFO] Downloading agent.py..."
+    if ! curl -fsSL "$AGENT_URL" -o "$AGENT_FILE"; then
+        echo "[FAIL] Failed to download agent.py."
+        rm -f "$AGENT_FILE"
+        exit 1
+    fi
 
     if [ ! -s "$AGENT_FILE" ]; then
-
-        echo "[FAIL] agent.py пустой."
+        echo "[FAIL] Downloaded file is empty."
+        rm -f "$AGENT_FILE"
         exit 1
-
     fi
 
-    echo "[OK] agent.py готов к запуску."
-    echo ""
+    EXPECTED=$(printf '%s' "${ASSET_DIGEST#sha256:}" | tr '[:upper:]' '[:lower:]')
+    ACTUAL=$(python -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$AGENT_FILE")
 
+    if [ "$ACTUAL" != "$EXPECTED" ]; then
+        echo "[FAIL] agent.py checksum mismatch."
+        rm -f "$AGENT_FILE"
+        exit 1
+    fi
+
+    echo "[OK] agent.py checksum matches."
+
+    if ! python -m py_compile "$AGENT_FILE" >/dev/null 2>&1; then
+        echo "[FAIL] agent.py failed Python validation."
+        rm -f "$AGENT_FILE"
+        exit 1
+    fi
+
+    echo "[OK] agent.py passed validation."
+    echo ""
     echo "================================"
-    echo "       Bootstrap SUCCESS"
+    echo "      Bootstrap SUCCESS"
     echo "================================"
-    echo ""
-    echo "[INFO] Agent: $AGENT_FILE"
-    echo "[INFO] Передача управления агенту..."
-    echo ""
+    echo "[INFO] Handing control to agent..."
 
-} | fix_print
+}
 
-
-# ==========================================
-# Проверяем результат основного блока
-# ==========================================
-
-EXIT_CODE=${PIPESTATUS[0]}
+EXIT_CODE=$?
 
 if [ "$EXIT_CODE" -ne 0 ]; then
     exit "$EXIT_CODE"
 fi
 
-
-# ==========================================
-# Восстанавливаем Python platform
-# ==========================================
-
-if ! fix_python_platform >/dev/null 2>&1; then
-    exit 1
-fi
-
-
-# ==========================================
-# Запуск агента
-# ==========================================
-
-exec python "$AGENT_FILE" </dev/tty
+exec python "$HOME/agent.py" </dev/tty
