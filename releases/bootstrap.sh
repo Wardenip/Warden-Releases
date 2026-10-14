@@ -1,4 +1,4 @@
-﻿#!/data/data/com.termux/files/usr/bin/bash
+#!/data/data/com.termux/files/usr/bin/bash
 
 # ==========================================
 # Fallback for known problematic Android ABI
@@ -268,4 +268,45 @@ if [ "$EXIT_CODE" -ne 0 ]; then
     exit "$EXIT_CODE"
 fi
 
-exec python "$HOME/agent.py" </dev/tty
+cd "$HOME" || exit 1
+
+if command -v termux-wake-lock >/dev/null 2>&1; then
+    termux-wake-lock >/dev/null 2>&1 || true
+fi
+
+LOG="$HOME/warden.log"
+fast_exits=0
+
+while true; do
+    started=$(date +%s)
+    python "$HOME/agent.py" </dev/tty
+    code=$?
+    now=$(date '+%Y-%m-%d %H:%M:%S')
+    printf '%s supervisor: python exit %s\n' "$now" "$code" >> "$LOG"
+    echo "[supervisor] агент завершился с кодом $code. Запись в $LOG"
+
+    if [ "$code" -eq 2 ]; then
+        echo "[supervisor] остановка: лицензия или setup."
+        exit 0
+    fi
+
+    if [ "$code" -eq 42 ]; then
+        if ! : </dev/tty >/dev/null 2>&1; then
+            echo "[supervisor] сессия Termux закрыта."
+            exit 0
+        fi
+    fi
+
+    if [ $(( $(date +%s) - started )) -gt 120 ]; then
+        fast_exits=0
+    fi
+
+    fast_exits=$((fast_exits + 1))
+
+    if [ "$fast_exits" -ge 8 ]; then
+        echo "[supervisor] 8 быстрых выходов подряд. Смотри $LOG"
+        exit 1
+    fi
+
+    sleep 3
+done
